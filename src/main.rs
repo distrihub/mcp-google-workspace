@@ -1,7 +1,11 @@
 use anyhow::Result;
 use async_mcp::transport::ServerStdioTransport;
 use clap::{Parser, Subcommand};
-use mcp_google_workspace::{logging::init_logging, DriveServer, GoogleAuthService, SheetsServer};
+use mcp_google_workspace::{
+    logging::init_logging,
+    servers::{drive, sheets},
+    GoogleAuthService,
+};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -13,17 +17,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Start the Google Drive server
-    Drive {
-        /// Google OAuth access token
-        #[arg(long, env = "ACCESS_TOKEN")]
-        access_token: String,
-    },
+    Drive,
     /// Start the Google Sheets server
-    Sheets {
-        /// Google OAuth access token
-        #[arg(long, env = "ACCESS_TOKEN")]
-        access_token: String,
-    },
+    Sheets,
     Refresh {
         /// Google OAuth client ID
         #[arg(long, env = "GOOGLE_CLIENT_ID")]
@@ -44,16 +40,16 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Drive { access_token } => {
-            let server = DriveServer::new(&access_token).build(ServerStdioTransport)?;
+        Commands::Drive => {
+            let server = drive::build(ServerStdioTransport)?;
             let server_handle = tokio::spawn(async move { server.listen().await });
 
             server_handle
                 .await?
                 .map_err(|e| anyhow::anyhow!("Drive server error: {:#?}", e))?;
         }
-        Commands::Sheets { access_token } => {
-            let server = SheetsServer::new(&access_token).build(ServerStdioTransport)?;
+        Commands::Sheets => {
+            let server = sheets::build(ServerStdioTransport)?;
             let server_handle = tokio::spawn(async move { server.listen().await });
 
             server_handle

@@ -1,15 +1,13 @@
 mod auth;
 pub mod client;
 pub mod logging;
-mod servers;
+pub mod servers;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export servers
 pub use auth::GoogleAuthService;
-pub use servers::drive::DriveServer;
-pub use servers::sheets::SheetsServer;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -1,15 +1,16 @@
 use crate::{
     client::{get_drive_client, get_sheets_client},
-    SheetsServer,
+    servers::sheets,
 };
 use async_mcp::{
     protocol::RequestOptions,
     transport::{ClientInMemoryTransport, ServerInMemoryTransport, Transport},
+    types::CallToolRequest,
 };
 use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{env, time::Duration};
+use std::{collections::HashMap, env, time::Duration};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,8 +20,8 @@ struct Sheet {
     sheet_name: String,
 }
 
-async fn async_sheets_server(transport: ServerInMemoryTransport, access_token: String) {
-    let server = SheetsServer::new(&access_token).build(transport).unwrap();
+async fn async_sheets_server(transport: ServerInMemoryTransport) {
+    let server = sheets::build(transport).unwrap();
     server.listen().await.unwrap();
 }
 
@@ -30,8 +31,7 @@ async fn test_sheets_operations() -> anyhow::Result<()> {
     let access_token = env::var("GOOGLE_ACCESS_TOKEN").unwrap();
 
     let client_transport = ClientInMemoryTransport::new(move |t| {
-        let token = access_token.clone();
-        tokio::spawn(async move { async_sheets_server(t, token).await })
+        tokio::spawn(async move { async_sheets_server(t).await })
     });
     client_transport.open().await?;
 
@@ -39,14 +39,24 @@ async fn test_sheets_operations() -> anyhow::Result<()> {
     let client_clone = client.clone();
     let _client_handle = tokio::spawn(async move { client_clone.start().await });
 
+    let params = CallToolRequest {
+        name: "read_values".to_string(),
+        arguments: Some(HashMap::from([
+            (
+                "spreadsheet_id".to_string(),
+                "your-test-spreadsheet-id".to_string().into(),
+            ),
+            ("range".to_string(), "Sheet1!A1:D10".to_string().into()),
+        ])),
+        meta: Some(json!({
+            "access_token": access_token
+        })),
+    };
     // Test read values
     let response = client
         .request(
             "read_values",
-            Some(json!({
-                "spreadsheet_id": "your-test-spreadsheet-id",
-                "range": "Sheet1!A1:D10"
-            })),
+            Some(serde_json::to_value(&params).unwrap()),
             RequestOptions::default().timeout(Duration::from_secs(5)),
         )
         .await?;

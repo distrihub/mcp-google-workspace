@@ -1,14 +1,15 @@
-use crate::{client::get_drive_client, logging::init_logging, DriveServer};
+use crate::{client::get_drive_client, logging::init_logging, servers::drive};
 use async_mcp::{
     protocol::RequestOptions,
     transport::{ClientInMemoryTransport, ServerInMemoryTransport, Transport},
+    types::CallToolRequest,
 };
 use dotenv::dotenv;
 use serde_json::json;
-use std::{env, time::Duration};
+use std::{collections::HashMap, env, time::Duration};
 
-async fn async_drive_server(transport: ServerInMemoryTransport, access_token: String) {
-    let server = DriveServer::new(&access_token).build(transport).unwrap();
+async fn async_drive_server(transport: ServerInMemoryTransport) {
+    let server = drive::build(transport).unwrap();
     server.listen().await.unwrap();
 }
 
@@ -18,8 +19,7 @@ async fn test_drive_operations() -> anyhow::Result<()> {
     let access_token = env::var("GOOGLE_ACCESS_TOKEN").unwrap();
 
     let client_transport = ClientInMemoryTransport::new(move |t| {
-        let token = access_token.clone();
-        tokio::spawn(async move { async_drive_server(t, token).await })
+        tokio::spawn(async move { async_drive_server(t).await })
     });
     client_transport.open().await?;
 
@@ -27,14 +27,24 @@ async fn test_drive_operations() -> anyhow::Result<()> {
     let client_clone = client.clone();
     let _client_handle = tokio::spawn(async move { client_clone.start().await });
 
+    let params = CallToolRequest {
+        name: "list_files".to_string(),
+        arguments: Some(HashMap::from([
+            (
+                "mime_type".to_string(),
+                "application/vnd.google-apps.folder".to_string().into(),
+            ),
+            ("page_size".to_string(), 5.into()),
+        ])),
+        meta: Some(json!({
+            "access_token": access_token
+        })),
+    };
     // Test list files
     let response = client
         .request(
             "list_files",
-            Some(json!({
-                "mime_type": "application/vnd.google-apps.folder",
-                "page_size": 5
-            })),
+            Some(serde_json::to_value(&params).unwrap()),
             RequestOptions::default().timeout(Duration::from_secs(5)),
         )
         .await?;
