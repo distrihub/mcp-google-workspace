@@ -41,15 +41,12 @@ async fn test_sheets_operations() -> anyhow::Result<()> {
 
     let params = CallToolRequest {
         name: "read_values".to_string(),
-        arguments: Some(HashMap::from([
-            (
-                "spreadsheet_id".to_string(),
-                "your-test-spreadsheet-id".to_string().into(),
-            ),
-            ("range".to_string(), "Sheet1!A1:D10".to_string().into()),
-        ])),
+        arguments: Some(HashMap::new()),
         meta: Some(json!({
-            "access_token": access_token
+            "access_token": access_token,
+            "spreadsheet_id": "1yO2ZVWb-EEhv-sbUFrJm5awOBYuFQlAzWHYNeflJses",
+            "sheet": "Sheet1",
+            "range": "A1:D10"
         })),
     };
     // Test read values

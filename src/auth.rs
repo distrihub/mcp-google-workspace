@@ -14,11 +14,6 @@ pub struct TokenResponse {
     pub token_type: String,
 }
 
-#[derive(Deserialize)]
-pub struct RefreshTokenRequest {
-    pub refresh_token: String,
-}
-
 #[derive(Clone)]
 pub struct GoogleAuthService {
     pub client: Client,

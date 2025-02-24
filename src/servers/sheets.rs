@@ -49,28 +49,37 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "spreadsheet_id": {"type": "string"},
-                    "range": {"type": "string"},
                     "major_dimension": {"type": "string", "enum": ["ROWS", "COLUMNS"], "default": "ROWS"}
-                },
-                "required": ["spreadsheet_id", "range"]
+                }
             }),
         },
         move |req: CallToolRequest| {
             Box::pin(async move {
                 let access_token = get_access_token(&req)?;
                 let args = req.arguments.clone().unwrap_or_default();
+                let context = req.meta.clone().unwrap_or_default();
                 
                 let result = async {
                     let sheets = get_sheets_client(access_token);
                     
-                    let spreadsheet_id = args["spreadsheet_id"].as_str().context("spreadsheet_id required")?;
-                    let range = args["range"].as_str().context("range required")?;
+                    let spreadsheet_id = context.get("spreadsheet_id")
+                        .and_then(|v| v.as_str())
+                        .context("spreadsheet_id required in context")?;
+                    
+                    // Get sheet name from context and combine with range
+                    let sheet = context.get("sheet")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Sheet1");
+                    let user_range = context.get("range")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("A1:ZZ");
+                    let range = format!("{}!{}", sheet, user_range);
+                    
                     let major_dimension = args["major_dimension"].as_str().unwrap_or("ROWS");
 
                     let result = sheets
                         .spreadsheets()
-                        .values_get(spreadsheet_id, range)
+                        .values_get(spreadsheet_id, &range)
                         .major_dimension(major_dimension)
                         .doit()
                         .await?;
@@ -89,7 +98,7 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
         },
     );
 
-    // Write values (updated to use major_dimension)
+    // Write values
     server.register_tool(
         Tool {
             name: "write_values".to_string(),
@@ -97,23 +106,34 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "spreadsheet_id": {"type": "string"},
-                    "range": {"type": "string"},
                     "values": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
                     "major_dimension": {"type": "string", "enum": ["ROWS", "COLUMNS"], "default": "ROWS"}
                 },
-                "required": ["spreadsheet_id", "range", "values"]
+                "required": ["values"]
             }),
         },
         move |req: CallToolRequest| {
             Box::pin(async move {
                 let access_token = get_access_token(&req)?;
                 let args = req.arguments.clone().unwrap_or_default();
+                let context = req.meta.clone().unwrap_or_default();
+                
                 let result = async {
                     let sheets = get_sheets_client(access_token);
                     
-                    let spreadsheet_id = args["spreadsheet_id"].as_str().context("spreadsheet_id required")?;
-                    let range = args["range"].as_str().context("range required")?;
+                    let spreadsheet_id = context.get("spreadsheet_id")
+                        .and_then(|v| v.as_str())
+                        .context("spreadsheet_id required in context")?;
+                    
+                    // Get sheet name from context and combine with range
+                    let sheet = context.get("sheet")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Sheet1");
+                    let user_range = context.get("range")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("A1");
+                    let range = format!("{}!{}", sheet, user_range);
+                    
                     let values = args["values"].as_array().context("values required")?;
                     let major_dimension = args["major_dimension"].as_str().unwrap_or("ROWS");
 
@@ -129,7 +149,7 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
 
                     let result = sheets
                         .spreadsheets()
-                        .values_update(value_range, spreadsheet_id, range)
+                        .values_update(value_range, spreadsheet_id, &range)
                         .doit()
                         .await?;
 
@@ -226,27 +246,34 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             description: Some("Clear values from a range in a Google Sheet".to_string()),
             input_schema: json!({
                 "type": "object",
-                "properties": {
-                    "spreadsheet_id": {"type": "string"},
-                    "range": {"type": "string"}
-                },
-                "required": ["spreadsheet_id", "range"]
+                "properties": {}
             }),
         },
         move |req: CallToolRequest| {
             Box::pin(async move {
                 let access_token = get_access_token(&req)?;
-                let args = req.arguments.clone().unwrap_or_default();
+                let context = req.meta.clone().unwrap_or_default();
+                
                 let result = async {
                     let sheets = get_sheets_client(access_token);
                     
-                    let spreadsheet_id = args["spreadsheet_id"].as_str().context("spreadsheet_id required")?;
-                    let range = args["range"].as_str().context("range required")?;
+                    let spreadsheet_id = context.get("spreadsheet_id")
+                        .and_then(|v| v.as_str())
+                        .context("spreadsheet_id required in context")?;
+                    
+                    // Get sheet name from context and combine with range
+                    let sheet = context.get("sheet")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Sheet1");
+                    let user_range = context.get("range")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("A1:ZZ");
+                    let range = format!("{}!{}", sheet, user_range);
 
                     let clear_request = google_sheets4::api::ClearValuesRequest::default();
                     let result = sheets
                         .spreadsheets()
-                        .values_clear(clear_request, spreadsheet_id, range)
+                        .values_clear(clear_request, spreadsheet_id, &range)
                         .doit()
                         .await?;
 
