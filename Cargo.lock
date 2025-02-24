@@ -1493,7 +1493,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcp-google-sheets"
+name = "mcp-google-workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -1,5 +1,5 @@
 [package]
-name = "mcp-google-sheets"
+name = "mcp-google-workspace"
 version = "0.1.0"
 edition = "2021"
 
@@ -31,3 +31,7 @@ urlencoding = "2.1.0"
 
 [dev-dependencies]
 dotenv = "0.15"
+
+[[bin]]
+name = "mcp-google"
+path = "src/main.rs"

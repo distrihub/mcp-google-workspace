@@ -3,8 +3,8 @@ use async_mcp::{
     server::{Server, ServerBuilder},
     transport::Transport,
     types::{
-        CallToolRequest, CallToolResponse, ListRequest, PromptsListResponse, Resource,
-        ResourcesListResponse, ServerCapabilities, Tool, ToolResponseContent,
+        CallToolRequest, CallToolResponse, ListRequest, Resource, ResourcesListResponse,
+        ServerCapabilities, Tool, ToolResponseContent,
     },
 };
 use google_drive3::DriveHub;
@@ -113,52 +113,6 @@ impl DriveServer {
                 })
             },
         );
-
-        // Create folder
-        // server.register_tool(
-        //     Tool {
-        //         name: "create_folder".to_string(),
-        //         description: Some("Create a new folder in Google Drive".to_string()),
-        //         input_schema: json!({
-        //             "type": "object",
-        //             "properties": {
-        //                 "name": {"type": "string"},
-        //                 "parent_id": {"type": "string", "description": "Optional parent folder ID"}
-        //             },
-        //             "required": ["name"]
-        //         }),
-        //     },
-        //     move |req: CallToolRequest| {
-        //         let drive = drive.clone();
-        //         Box::pin(async move {
-        //             let args = req.arguments.unwrap_or_default();
-        //             let result = async {
-        //                 let drive = drive.lock().await;
-
-        //                 let mut file = google_drive3::api::File::default();
-        //                 file.name = Some(args["name"].as_str().unwrap().to_string());
-        //                 file.mime_type = Some("application/vnd.google-apps.folder".to_string());
-
-        //                 if let Some(parent_id) = args.get("parent_id").and_then(|v| v.as_str()) {
-        //                     file.parents = Some(vec![parent_id.to_string()]);
-        //                 }
-
-        //                 let result = drive.files().create(file).doit().await?;
-
-        //                 Ok(CallToolResponse {
-        //                     content: vec![ToolResponseContent::Text {
-        //                         text: serde_json::to_string(&result.1)?,
-        //                     }],
-        //                     is_error: None,
-        //                     meta: None,
-        //                 })
-        //             }
-        //             .await;
-
-        //             handle_result(result)
-        //         })
-        //     },
-        // );
 
         Ok(())
     }

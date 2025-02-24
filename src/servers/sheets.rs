@@ -52,9 +52,11 @@ impl SheetsServer {
 
     fn register_tools<T: Transport>(&self, server: &mut ServerBuilder<T>) -> Result<()> {
         let sheets = self.sheets.clone();
-        let sheets2 = sheets.clone();  // Clone for second tool
+        let sheets2 = sheets.clone();
+        let sheets3 = sheets.clone();
+        let sheets4 = sheets.clone();
 
-        // Read values
+        // Read values (updated to use major_dimension)
         server.register_tool(
             Tool {
                 name: "read_values".to_string(),
@@ -78,10 +80,12 @@ impl SheetsServer {
                         
                         let spreadsheet_id = args["spreadsheet_id"].as_str().context("spreadsheet_id required")?;
                         let range = args["range"].as_str().context("range required")?;
+                        let major_dimension = args["major_dimension"].as_str().unwrap_or("ROWS");
 
                         let result = sheets
                             .spreadsheets()
                             .values_get(spreadsheet_id, range)
+                            .major_dimension(major_dimension)
                             .doit()
                             .await?;
 
@@ -99,7 +103,7 @@ impl SheetsServer {
             },
         );
 
-        // Write values
+        // Write values (updated to use major_dimension)
         server.register_tool(
             Tool {
                 name: "write_values".to_string(),
@@ -125,8 +129,10 @@ impl SheetsServer {
                         let spreadsheet_id = args["spreadsheet_id"].as_str().context("spreadsheet_id required")?;
                         let range = args["range"].as_str().context("range required")?;
                         let values = args["values"].as_array().context("values required")?;
+                        let major_dimension = args["major_dimension"].as_str().unwrap_or("ROWS");
 
                         let mut value_range = google_sheets4::api::ValueRange::default();
+                        value_range.major_dimension = Some(major_dimension.to_string());
                         value_range.values = Some(values.iter().map(|row| {
                             row.as_array()
                                 .unwrap_or(&vec![])
@@ -138,6 +144,123 @@ impl SheetsServer {
                         let result = sheets
                             .spreadsheets()
                             .values_update(value_range, spreadsheet_id, range)
+                            .doit()
+                            .await?;
+
+                        Ok(CallToolResponse {
+                            content: vec![ToolResponseContent::Text {
+                                text: serde_json::to_string(&result.1)?,
+                            }],
+                            is_error: None,
+                            meta: None,
+                        })
+                    }.await;
+
+                    handle_result(result)
+                })
+            },
+        );
+
+        // Create spreadsheet
+        server.register_tool(
+            Tool {
+                name: "create_spreadsheet".to_string(),
+                description: Some("Create a new Google Sheet".to_string()),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "sheets": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"}
+                                }
+                            }
+                        }
+                    },
+                    "required": ["title"]
+                }),
+            },
+            move |req: CallToolRequest| {
+                let sheets = sheets3.clone();
+                Box::pin(async move {
+                    let args = req.arguments.unwrap_or_default();
+                    let result = async {
+                        let sheets = sheets.lock().await;
+                        
+                        let title = args["title"].as_str().context("title required")?;
+                        
+                        let mut spreadsheet = google_sheets4::api::Spreadsheet::default();
+                        spreadsheet.properties = Some(google_sheets4::api::SpreadsheetProperties {
+                            title: Some(title.to_string()),
+                            ..Default::default()
+                        });
+
+                        // Add sheets if specified
+                        if let Some(sheet_configs) = args["sheets"].as_array() {
+                            let sheets = sheet_configs.iter().map(|config| {
+                                let title = config["title"].as_str().unwrap_or("Sheet1").to_string();
+                                google_sheets4::api::Sheet {
+                                    properties: Some(google_sheets4::api::SheetProperties {
+                                        title: Some(title),
+                                        ..Default::default()
+                                    }),
+                                    ..Default::default()
+                                }
+                            }).collect();
+                            spreadsheet.sheets = Some(sheets);
+                        }
+
+                        let result = sheets
+                            .spreadsheets()
+                            .create(spreadsheet)
+                            .doit()
+                            .await?;
+
+                        Ok(CallToolResponse {
+                            content: vec![ToolResponseContent::Text {
+                                text: serde_json::to_string(&result.1)?,
+                            }],
+                            is_error: None,
+                            meta: None,
+                        })
+                    }.await;
+
+                    handle_result(result)
+                })
+            },
+        );
+
+        // Clear values
+        server.register_tool(
+            Tool {
+                name: "clear_values".to_string(),
+                description: Some("Clear values from a range in a Google Sheet".to_string()),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "spreadsheet_id": {"type": "string"},
+                        "range": {"type": "string"}
+                    },
+                    "required": ["spreadsheet_id", "range"]
+                }),
+            },
+            move |req: CallToolRequest| {
+                let sheets = sheets4.clone();
+                Box::pin(async move {
+                    let args = req.arguments.unwrap_or_default();
+                    let result = async {
+                        let sheets = sheets.lock().await;
+                        
+                        let spreadsheet_id = args["spreadsheet_id"].as_str().context("spreadsheet_id required")?;
+                        let range = args["range"].as_str().context("range required")?;
+
+                        let clear_request = google_sheets4::api::ClearValuesRequest::default();
+                        let result = sheets
+                            .spreadsheets()
+                            .values_clear(clear_request, spreadsheet_id, range)
                             .doit()
                             .await?;
 

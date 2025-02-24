@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_mcp::transport::ServerStdioTransport;
 use clap::{Parser, Subcommand};
-use mcp_google_sheets::{logging::init_logging, DriveServer, GoogleAuthService, SheetsServer};
+use mcp_google_workspace::{logging::init_logging, DriveServer, GoogleAuthService, SheetsServer};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
