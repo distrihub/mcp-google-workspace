@@ -5,7 +5,7 @@ use crate::{
 use async_mcp::{
     protocol::RequestOptions,
     transport::{ClientInMemoryTransport, ServerInMemoryTransport, Transport},
-    types::{CallToolRequest, ListRequest},
+    types::CallToolRequest,
 };
 use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
@@ -44,21 +44,6 @@ async fn test_sheets_operations() -> anyhow::Result<()> {
 
     // Add a small delay to ensure server is ready
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-    // First verify the sheet exists
-    let sheets = get_sheets_client(&access_token);
-    let spreadsheet = sheets.spreadsheets().get(&spreadsheet_id).doit().await?;
-
-    // Find if Sheet6 exists and get its actual name
-    let sheet_name = spreadsheet
-        .1
-        .sheets
-        .and_then(|sheets| {
-            sheets
-                .into_iter()
-                .find_map(|sheet| sheet.properties.and_then(|props| props.title))
-        })
-        .unwrap_or_else(|| "Sheet6".to_string()); // Default to Sheet1 if no sheets found
 
     let params = CallToolRequest {
         name: "read_values".to_string(),
@@ -178,43 +163,135 @@ async fn test_list_spreadsheet_details() -> Result<(), Box<dyn std::error::Error
 }
 
 #[tokio::test]
-async fn test_get_spreadsheet_details() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_sheet_operations() -> anyhow::Result<()> {
     dotenv().ok();
     let access_token = env::var("GOOGLE_ACCESS_TOKEN").unwrap();
+    let spreadsheet_id = env::var("TEST_SPREADSHEET_ID").unwrap();
 
-    let drive = get_drive_client(&access_token);
-    let sheets = get_sheets_client(&access_token);
+    let client_transport = ClientInMemoryTransport::new(move |t| {
+        tokio::spawn(async move { async_sheets_server(t).await })
+    });
+    client_transport.open().await?;
 
-    let result = drive
-        .files()
-        .list()
-        .q("mimeType='application/vnd.google-apps.spreadsheet'")
-        .order_by("modifiedTime desc")
-        .page_size(10)
-        .doit()
+    let client = async_mcp::client::ClientBuilder::new(client_transport.clone()).build();
+    let client_clone = client.clone();
+    let _client_handle = tokio::spawn(async move { client_clone.start().await });
+
+    // Add a small delay to ensure server is ready
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // First get sheet info
+    let get_info_params = CallToolRequest {
+        name: "get_sheet_info".to_string(),
+        arguments: None,
+        meta: Some(json!({
+            "access_token": access_token,
+            "spreadsheet_id": spreadsheet_id,
+        })),
+    };
+
+    let info_response = client
+        .request(
+            "tools/call",
+            Some(serde_json::to_value(&get_info_params).unwrap()),
+            RequestOptions::default().timeout(Duration::from_secs(5)),
+        )
         .await?;
 
-    if let Some(files) = result.1.files {
-        for file in files {
-            let id = file.id.clone().unwrap_or_default();
-            println!(
-                "Spreadsheet: {} (ID: {})",
-                file.name.unwrap_or_default(),
-                id
-            );
+    println!("Sheet info:\n{}", info_response);
 
-            // Get the content of each spreadsheet
-            let spreadsheet = sheets.spreadsheets().get(&id).doit().await?;
+    // Read the current value from A1
+    let read_params = CallToolRequest {
+        name: "read_values".to_string(),
+        arguments: None,
+        meta: Some(json!({
+            "access_token": access_token,
+            "spreadsheet_id": spreadsheet_id,
+            "sheet": "Sheet1",
+            "range": "A1"
+        })),
+    };
 
-            println!("Sheets in this spreadsheet:");
-            for sheet in spreadsheet.1.sheets.unwrap_or_default() {
-                if let Some(props) = sheet.properties {
-                    println!("- Sheet name: {}", props.title.unwrap_or_default());
-                }
-            }
-            println!("-------------------");
-        }
-    }
+    let read_response = client
+        .request(
+            "tools/call",
+            Some(serde_json::to_value(&read_params).unwrap()),
+            RequestOptions::default().timeout(Duration::from_secs(5)),
+        )
+        .await?;
+
+    // After read_response
+    println!("Initial read response:\n{}", read_response);
+
+    // Parse the current value and increment it
+    let read_value = serde_json::from_str::<serde_json::Value>(&read_response.to_string())?;
+    println!("Parsed read value: {:?}", read_value);
+
+    let current_value = read_value["content"][0]["text"]
+        .as_str()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .and_then(|v| v["values"][0][0].as_str().map(String::from))
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0);
+    let new_value = current_value + 1;
+
+    // Write the incremented value back
+    let mut args = HashMap::new();
+    args.insert("values".to_string(), json!([[new_value.to_string()]]));
+    args.insert("range".to_string(), json!("A1"));
+
+    let write_params = CallToolRequest {
+        name: "write_values".to_string(),
+        arguments: Some(args),
+        meta: Some(json!({
+            "access_token": access_token,
+            "spreadsheet_id": spreadsheet_id,
+            "sheet": "Sheet1"
+        })),
+    };
+
+    let write_response = client
+        .request(
+            "tools/call",
+            Some(serde_json::to_value(&write_params).unwrap()),
+            RequestOptions::default().timeout(Duration::from_secs(5)),
+        )
+        .await?;
+
+    println!("Write response:\n{}", write_response);
+
+    // Verify the new value
+    let verify_response = client
+        .request(
+            "tools/call",
+            Some(serde_json::to_value(&read_params).unwrap()),
+            RequestOptions::default().timeout(Duration::from_secs(5)),
+        )
+        .await?;
+
+    // After verify_response
+    println!("Verify response:\n{}", verify_response);
+
+    let verify_value = serde_json::from_str::<serde_json::Value>(&verify_response.to_string())?;
+    println!("Parsed verify value: {:?}", verify_value);
+
+    let updated_value = verify_value["content"][0]["text"]
+        .as_str()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .and_then(|v| v["values"][0][0].as_str().map(String::from))
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0);
+
+    assert_eq!(
+        updated_value, new_value,
+        "Value was not updated correctly. Expected {}, got {}",
+        new_value, updated_value
+    );
+
+    println!(
+        "Successfully incremented value from {} to {}",
+        current_value, new_value
+    );
 
     Ok(())
 }
