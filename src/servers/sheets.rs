@@ -75,7 +75,10 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
                         .unwrap_or("A1:ZZ");
                     let range = format!("{}!{}", sheet, user_range);
                     
-                    let major_dimension = args["major_dimension"].as_str().unwrap_or("ROWS");
+                    // Safely get major_dimension with default value
+                    let major_dimension = args.get("major_dimension")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ROWS");
 
                     let result = sheets
                         .spreadsheets()

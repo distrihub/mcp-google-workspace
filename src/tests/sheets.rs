@@ -5,7 +5,7 @@ use crate::{
 use async_mcp::{
     protocol::RequestOptions,
     transport::{ClientInMemoryTransport, ServerInMemoryTransport, Transport},
-    types::CallToolRequest,
+    types::{CallToolRequest, ListRequest},
 };
 use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,9 @@ struct Sheet {
 }
 
 async fn async_sheets_server(transport: ServerInMemoryTransport) {
+    println!("Starting sheets server...");
     let server = sheets::build(transport).unwrap();
+    println!("Server built successfully");
     server.listen().await.unwrap();
 }
 
@@ -29,6 +31,7 @@ async fn async_sheets_server(transport: ServerInMemoryTransport) {
 async fn test_sheets_operations() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
     let access_token = env::var("GOOGLE_ACCESS_TOKEN").unwrap();
+    let spreadsheet_id = env::var("TEST_SPREADSHEET_ID").unwrap();
 
     let client_transport = ClientInMemoryTransport::new(move |t| {
         tokio::spawn(async move { async_sheets_server(t).await })
@@ -39,24 +42,50 @@ async fn test_sheets_operations() -> anyhow::Result<()> {
     let client_clone = client.clone();
     let _client_handle = tokio::spawn(async move { client_clone.start().await });
 
+    // Add a small delay to ensure server is ready
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // First verify the sheet exists
+    let sheets = get_sheets_client(&access_token);
+    let spreadsheet = sheets.spreadsheets().get(&spreadsheet_id).doit().await?;
+
+    // Find if Sheet6 exists and get its actual name
+    let sheet_name = spreadsheet
+        .1
+        .sheets
+        .and_then(|sheets| {
+            sheets
+                .into_iter()
+                .find_map(|sheet| sheet.properties.and_then(|props| props.title))
+        })
+        .unwrap_or_else(|| "Sheet6".to_string()); // Default to Sheet1 if no sheets found
+
     let params = CallToolRequest {
         name: "read_values".to_string(),
         arguments: Some(HashMap::new()),
         meta: Some(json!({
             "access_token": access_token,
-            "spreadsheet_id": "1yO2ZVWb-EEhv-sbUFrJm5awOBYuFQlAzWHYNeflJses",
-            "sheet": "Sheet1",
-            "range": "A1:D10"
+            "spreadsheet_id": spreadsheet_id,
+            "sheet": "Sheet6"
         })),
     };
+
     // Test read values
     let response = client
         .request(
-            "read_values",
+            "tools/call",
             Some(serde_json::to_value(&params).unwrap()),
             RequestOptions::default().timeout(Duration::from_secs(5)),
         )
         .await?;
+
+    // Add better error handling
+    let response_obj: serde_json::Value = serde_json::from_str(&response.to_string())?;
+    if let Some(error) = response_obj.get("error") {
+        println!("Error reading sheet: {}", error);
+        anyhow::bail!("Failed to read sheet: {}", error);
+    }
+
     println!("Read values response:\n{response}");
 
     Ok(())
@@ -65,20 +94,91 @@ async fn test_sheets_operations() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_google_sheets() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
+    // let access_token = env::var("GOOGLE_ACCESS_TOKEN").unwrap();
+    // let auth_service = GoogleAuthService::new(
+    //     env::var("GOOGLE_CLIENT_ID").unwrap(),
+    //     env::var("GOOGLE_CLIENT_SECRET").unwrap(),
+    // )?;
+    // let token_response = auth_service.refresh_token(&access_token).await?;
+    // println!("Access token: {:?}", token_response);
+    // let access_token = token_response.access_token;
+
     let access_token = env::var("GOOGLE_ACCESS_TOKEN").unwrap();
     let sheets = get_sheets_client(&access_token);
 
-    let sheet_id = "1yO2ZVWb-EEhv-sbUFrJm5awOBYuFQlAzWHYNeflJses";
+    let spreadsheet_id = env::var("TEST_SPREADSHEET_ID").unwrap();
 
     // Try to read the spreadsheet
-    let result = sheets.spreadsheets().get(sheet_id).doit().await?;
-    println!("Spreadsheet data: {:?}", result);
+    let result = sheets.spreadsheets().get(&spreadsheet_id).doit().await?;
+    // Extract sheet names and ranges
+    if let Some(sheets) = result.1.sheets {
+        for sheet in sheets {
+            if let Some(properties) = sheet.properties {
+                let sheet_title = properties.title.unwrap_or_default();
+                let grid_props = properties.grid_properties.unwrap_or_default();
+                let row_count = grid_props.row_count.unwrap_or(0);
+                let column_count = grid_props.column_count.unwrap_or(0);
+
+                println!(
+                    "Sheet: {}\nRange: {}!A1:{}{}\n",
+                    sheet_title,
+                    sheet_title,
+                    (b'A' + (column_count as u8) - 1) as char,
+                    row_count
+                );
+            }
+        }
+    } else {
+        println!("No sheets found.");
+    }
 
     Ok(())
 }
 
 #[tokio::test]
 async fn test_list_spreadsheet_details() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv().ok();
+    let access_token = env::var("GOOGLE_ACCESS_TOKEN").unwrap();
+
+    let drive = get_drive_client(&access_token);
+    let sheets = get_sheets_client(&access_token);
+
+    let result = drive
+        .files()
+        .list()
+        .q("mimeType='application/vnd.google-apps.spreadsheet'")
+        .order_by("modifiedTime desc")
+        .page_size(10)
+        .doit()
+        .await?;
+
+    if let Some(files) = result.1.files {
+        for file in files {
+            let id = file.id.clone().unwrap_or_default();
+            println!(
+                "Spreadsheet: {} (ID: {})",
+                file.name.unwrap_or_default(),
+                id
+            );
+
+            // Get the content of each spreadsheet
+            let spreadsheet = sheets.spreadsheets().get(&id).doit().await?;
+
+            println!("Sheets in this spreadsheet:");
+            for sheet in spreadsheet.1.sheets.unwrap_or_default() {
+                if let Some(props) = sheet.properties {
+                    println!("- Sheet name: {}", props.title.unwrap_or_default());
+                }
+            }
+            println!("-------------------");
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_get_spreadsheet_details() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     let access_token = env::var("GOOGLE_ACCESS_TOKEN").unwrap();
 
